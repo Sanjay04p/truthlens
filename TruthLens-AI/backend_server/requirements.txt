@@ -6,3 +6,7 @@ huggingface_hub
 fastapi
 uvicorn
 pydantic
+requests
+pillow
+python-multipart
+openai
