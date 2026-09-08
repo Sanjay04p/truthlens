@@ -13,7 +13,7 @@ class ImageVerificationPipeline:
         self.hf_token = os.getenv("HF_API_TOKEN")
         self.hf_client = InferenceClient(api_key=self.hf_token)
         # Using a robust open-source model for artifact detection
-        self.hf_model_id = "dima806/ai_vs_real_image_detection"
+        self.hf_model_id = "prithivMLmods/Deepfake-Detect-Siglip2"
         
         # 2. Backup Strategy: Sightengine API
         self.se_user = os.getenv("SIGHTENGINE_USER")
@@ -21,19 +21,26 @@ class ImageVerificationPipeline:
         self.se_endpoint = "https://api.sightengine.com/1.0/check.json"
 
     def _primary_hf_analysis(self, image_path):
-        """Strategy 1: Hugging Face Serverless Inference"""
-        print("   -> Attempting Strategy 1: Hugging Face Cloud...")
-        # Sends the image to the HF cloud classification endpoint
-        results = self.hf_client.image_classification(image_path, model=self.hf_model_id)
-        
-        # The API returns a list of dictionaries: [{'label': 'artificial', 'score': 0.9}]
+        """Strategy 1: Hugging Face Serverless Vision Inference."""
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+
+        results = self.hf_client.image_classification(image_bytes, model=self.hf_model_id)
+        print(f"[*] HF Raw Response: {results}")
+
+        # Extract fake probability accurately based on SigLIP classes
+        fake_score = 0.0
         for item in results:
-            if item['label'].lower() in ['artificial', 'fake', 'ai-generated']:
-                return item['score'] * 100
-                
-        # Fallback if 'fake' label isn't explicitly named
-        real_score = next((item['score'] for item in results if item['label'].lower() in ['human', 'real']), 1.0)
-        return (1.0 - real_score) * 100
+            label = item.get("label", "").lower()
+            if "fake" in label or "class 0" in label:
+                fake_score = item.get("score", 0.0) * 100
+                break
+            elif "real" in label or "class 1" in label:
+                # If it matches 'real' first, subtract from 100% to get the 'fake' score
+                fake_score = (1.0 - item.get("score", 0.0)) * 100
+                break
+
+        return fake_score
 
     def _fallback_sightengine_analysis(self, image_path):
         """Strategy 2: Sightengine Commercial API"""
