@@ -516,21 +516,7 @@ Temporary image files are removed after processing.
 * Improved explainability and evidence visualization
 * User feedback-based model improvement
 
----
 
-# 👨‍💻 Contributors
-
-**Team Project**
-
-Developed as an AI-based misinformation and media authenticity detection system.
-
----
-
-# 📜 License
-
-Add your preferred license here, such as **MIT License**, if applicable.
-
----
 
 ## ⭐ Project Summary
 
