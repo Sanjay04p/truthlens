@@ -343,90 +343,6 @@ It is:
 
 ---
 
-# 📁 Suggested Project Structure
-
-```text
-project/
-│
-├── backend/
-│   ├── app.py
-│   ├── text_pipeline.py
-│   ├── image_pipeline.py
-│   ├── cache.py
-│   ├── search.py
-│   └── llm.py
-│
-├── frontend/
-│   └── ...
-│
-├── requirements.txt
-├── .env.example
-├── README.md
-└── .gitignore
-```
-
----
-
-# ⚙️ Installation
-
-### 1. Clone the repository
-
-```bash
-git clone <your-repository-url>
-cd <project-folder>
-```
-
-### 2. Create a virtual environment
-
-```bash
-python -m venv venv
-```
-
-Activate it on Windows:
-
-```bash
-venv\Scripts\activate
-```
-
-On Linux/macOS:
-
-```bash
-source venv/bin/activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Configure environment variables
-
-Create a `.env` file based on `.env.example`.
-
-Example:
-
-```env
-LLM_API_KEY=your_api_key
-SIGHTENGINE_API_USER=your_user
-SIGHTENGINE_API_SECRET=your_secret
-```
-
-Add any additional API keys required by your implementation.
-
----
-
-# ▶️ Running the Project
-
-Start the backend using:
-
-```bash
-python app.py
-```
-
-If your project uses a framework such as FastAPI or Flask, use the corresponding startup command defined in your project.
-
----
 
 # 🔐 Security
 
@@ -506,15 +422,17 @@ Temporary image files are removed after processing.
 
 # 🔮 Future Improvements
 
-* Persistent vector database for long-term caching
-* More advanced source credibility scoring
-* Multiple independent LLM verification
-* Multilingual claim verification
-* Video and audio misinformation detection
-* Browser extension for real-time fact checking
-* Continuous source monitoring
-* Improved explainability and evidence visualization
-* User feedback-based model improvement
+* **Persistent Vector Database** – Store verified claims permanently for long-term caching and faster retrieval.
+* **Advanced Source Credibility Scoring** – Improve evaluation of the reliability and trustworthiness of web sources.
+* **Multiple Independent LLM Verification** – Use multiple models to cross-check important claims and improve reliability.
+* **Multilingual Claim Verification** – Support misinformation detection across multiple languages.
+* **Deepfake Video Detection** – Integrate AI-based video analysis to detect manipulated, synthetic, and deepfake videos.
+* **Video and Audio Misinformation Detection** – Extend the system beyond images and text to analyze manipulated audio and video content.
+* **Browser Extension** – Provide real-time fact checking while users browse online content.
+* **Continuous Source Monitoring** – Monitor previously verified claims for changes in supporting or contradicting evidence.
+* **Improved Explainability & Evidence Visualization** – Present evidence, confidence scores, and source relationships in a more understandable visual format.
+* **User Feedback-Based Model Improvement** – Use user feedback to improve verification accuracy and system performance.
+
 
 
 
