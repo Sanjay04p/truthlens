@@ -22,17 +22,16 @@ HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # IMPORTANT:
-# Set HF_MODEL_ID to a model that is actually enabled for your
-# Hugging Face account. If it is unavailable, the pipeline will
-# automatically use Grok as the Tier 2 fallback.
+# Set GROQ_MODEL_ID to configure the primary LLM.
+# If Groq is unavailable, the pipeline will automatically use
+# Hugging Face as the Tier 2 fallback.
 #
 # Example:
-# HF_MODEL_ID=your_supported_huggingface_chat_model
-HF_MODEL_ID = os.getenv("HF_MODEL_ID", "openai/gpt-oss-20b").strip()
-
-# Current xAI API model. The xAI documentation currently recommends
-# Grok 4.6 for general text/chat workloads.
+# GROQ_MODEL_ID=openai/gpt-oss-20b
 GROQ_MODEL_ID = os.getenv("GROQ_MODEL_ID", "openai/gpt-oss-20b")
+
+# Current Hugging Face API model.
+HF_MODEL_ID = os.getenv("HF_MODEL_ID", "openai/gpt-oss-20b").strip()
 
 # Search settings
 MAX_SEARCH_RESULTS = 5
@@ -61,7 +60,7 @@ class TextVerificationPipeline:
         if not HF_API_TOKEN and not GROQ_API_KEY:
             raise ValueError(
                 "No cloud API key found. Add HF_API_TOKEN and/or "
-                "XAI_API_KEY to your .env file."
+                "GROQ_API_KEY to your .env file."
             )
 
         # --------------------------------------------------------
@@ -87,13 +86,35 @@ class TextVerificationPipeline:
         self._build_seed_cache()
 
         # --------------------------------------------------------
-        # Hugging Face primary LLM
+        # Groq primary LLM
+        # --------------------------------------------------------
+        self.groq_client = None
+
+        if GROQ_API_KEY:
+            print(
+                f"[*] Groq Console primary model configured: "
+                f"{GROQ_MODEL_ID}"
+            )
+
+            # Groq provides an OpenAI-compatible API.
+            self.groq_client = OpenAI(
+                api_key=GROQ_API_KEY,
+                base_url="https://api.groq.com/openai/v1"
+            )
+        else:
+            print(
+                "[!] GROQ_API_KEY not found. "
+                "Groq primary is disabled."
+            )
+
+        # --------------------------------------------------------
+        # Hugging Face fallback LLM
         # --------------------------------------------------------
         self.hf_client = None
 
         if HF_API_TOKEN and HF_MODEL_ID:
             print(
-                f"[*] Hugging Face primary model configured: "
+                f"[*] Hugging Face fallback configured: "
                 f"{HF_MODEL_ID}"
             )
 
@@ -108,29 +129,7 @@ class TextVerificationPipeline:
         elif HF_API_TOKEN and not HF_MODEL_ID:
             print(
                 "[!] HF_API_TOKEN found but HF_MODEL_ID is not set. "
-                "Hugging Face will be skipped."
-            )
-
-        # --------------------------------------------------------
-        # Groq Console fallback LLM
-        # --------------------------------------------------------
-        self.groq_client = None
-
-        if GROQ_API_KEY:
-            print(
-                f"[*] Groq Console fallback configured: "
-                f"{GROQ_MODEL_ID}"
-            )
-
-            # Groq provides an OpenAI-compatible API.
-            self.groq_client = OpenAI(
-                api_key=GROQ_API_KEY,
-                base_url="https://api.groq.com/openai/v1"
-            )
-        else:
-            print(
-                "[!] GROQ_API_KEY not found. "
-                "Groq fallback is disabled."
+                "Hugging Face fallback will be skipped."
             )
 
         print("[*] Pipeline Ready!\n")
@@ -813,32 +812,13 @@ If evidence is insufficient, use "Unverified".
         }
 
     # ============================================================
-    # Primary LLM: Hugging Face
-    # ============================================================
-
-    def _call_huggingface(self, messages):
-        if not self.hf_client:
-            raise RuntimeError(
-                "Hugging Face primary model is not configured."
-            )
-
-        response = self.hf_client.chat_completion(
-            model=HF_MODEL_ID,
-            messages=messages,
-            max_tokens=500,
-            temperature=0.0
-        )
-
-        return response.choices[0].message.content
-
-    # ============================================================
-    # Fallback LLM: Groq Console
+    # Primary LLM: Groq Console
     # ============================================================
 
     def _call_groq(self, messages):
         if not self.groq_client:
             raise RuntimeError(
-                "Groq fallback is not configured. "
+                "Groq primary is not configured. "
                 "Add GROQ_API_KEY to .env."
             )
 
@@ -850,6 +830,25 @@ If evidence is insufficient, use "Unverified".
             temperature=0.0,
             max_tokens=500,
             response_format={"type": "json_object"}
+        )
+
+        return response.choices[0].message.content
+
+    # ============================================================
+    # Fallback LLM: Hugging Face
+    # ============================================================
+
+    def _call_huggingface(self, messages):
+        if not self.hf_client:
+            raise RuntimeError(
+                "Hugging Face fallback model is not configured."
+            )
+
+        response = self.hf_client.chat_completion(
+            model=HF_MODEL_ID,
+            messages=messages,
+            max_tokens=500,
+            temperature=0.0
         )
 
         return response.choices[0].message.content
@@ -895,35 +894,8 @@ If evidence is insufficient, use "Unverified".
             candidate_result=cached_result
         )
 
-        # Try primary first, then Grok.
+        # Try primary first, then Hugging Face.
         llm_errors = []
-
-        if self.hf_client:
-            try:
-                raw = self._call_huggingface(messages)
-                data = self._extract_json(raw)
-
-                certainty = self._safe_score(
-                    data.get("llm_certainty", 0)
-                )
-
-                same_label = (
-                    data.get("label") == cached["label"]
-                )
-
-                if (
-                    same_label
-                    and certainty >= TIER1_REUSE_CONFIDENCE
-                ):
-                    result = self._format_cached_result(cached)
-                    result["tier"] = 1
-                    result["verification_type"] = (
-                        "session_cache_semantic_match"
-                    )
-                    return result
-
-            except Exception as e:
-                llm_errors.append(f"Hugging Face: {e}")
 
         if self.groq_client:
             try:
@@ -952,6 +924,33 @@ If evidence is insufficient, use "Unverified".
             except Exception as e:
                 llm_errors.append(f"Groq: {e}")
 
+        if self.hf_client:
+            try:
+                raw = self._call_huggingface(messages)
+                data = self._extract_json(raw)
+
+                certainty = self._safe_score(
+                    data.get("llm_certainty", 0)
+                )
+
+                same_label = (
+                    data.get("label") == cached["label"]
+                )
+
+                if (
+                    same_label
+                    and certainty >= TIER1_REUSE_CONFIDENCE
+                ):
+                    result = self._format_cached_result(cached)
+                    result["tier"] = 1
+                    result["verification_type"] = (
+                        "session_cache_semantic_match"
+                    )
+                    return result
+
+            except Exception as e:
+                llm_errors.append(f"Hugging Face: {e}")
+
         if llm_errors:
             print(
                 "[!] Tier 1 semantic confirmation unavailable. "
@@ -968,8 +967,8 @@ If evidence is insufficient, use "Unverified".
         """
         Tier 2:
         1. Fetch live web evidence.
-        2. Try Hugging Face primary LLM.
-        3. If HF fails, use Grok.
+        2. Try Groq primary LLM.
+        3. If Groq fails, use Hugging Face.
         4. Preserve actual source names/URLs from the web search.
         """
 
@@ -986,41 +985,12 @@ If evidence is insufficient, use "Unverified".
         )
 
         # --------------------------------------------------------
-        # Primary: Hugging Face
-        # --------------------------------------------------------
-
-        if self.hf_client:
-            try:
-                print("   -> Trying primary LLM (Hugging Face)...")
-
-                data = self._call_and_parse_with_retry(
-                    self._call_huggingface,
-                    messages,
-                    "Hugging Face"
-                )
-
-                return self._build_result(
-                    data,
-                    sources,
-                    tier=2,
-                    verification_type="live_web_huggingface"
-                )
-
-            except Exception as e:
-                print(
-                    f"[!] Hugging Face failed: {e}"
-                )
-                print(
-                    "   -> Switching to Groq fallback..."
-                )
-
-        # --------------------------------------------------------
-        # Fallback: Grok Console
+        # Primary: Groq Console
         # --------------------------------------------------------
 
         if self.groq_client:
             try:
-                print("   -> Trying fallback LLM (Groq)...")
+                print("   -> Trying primary LLM (Groq)...")
 
                 data = self._call_and_parse_with_retry(
                     self._call_groq,
@@ -1032,38 +1002,42 @@ If evidence is insufficient, use "Unverified".
                     data,
                     sources,
                     tier=2,
-                    verification_type="live_web_groq_fallback"
+                    verification_type="live_web_groq"
                 )
 
             except Exception as e:
                 print(
-                    f"[!] Groq fallback failed: {e}"
+                    f"[!] Groq failed: {e}"
+                )
+                print(
+                    "   -> Switching to Hugging Face fallback..."
                 )
 
-                return {
-                    "tier": 2,
-                    "label": "Unverified",
-                    "confidence_score": "0%",
-                    "breakdown": {
-                        "evidence_strength": 0,
-                        "source_credibility": 0,
-                        "model_certainty": 0
-                    },
-                    "reason": (
-                        "Both the primary and fallback LLM failed. "
-                        "The claim cannot be safely verified."
-                    ),
-                    "sources": [
-                        {
-                            "name": source["name"],
-                            "domain": source["domain"],
-                            "url": source["url"],
-                            "role": "retrieved evidence"
-                        }
-                        for source in sources
-                    ],
-                    "verification_type": "verification_failed"
-                }
+        # --------------------------------------------------------
+        # Fallback: Hugging Face
+        # --------------------------------------------------------
+
+        if self.hf_client:
+            try:
+                print("   -> Trying fallback LLM (Hugging Face)...")
+
+                data = self._call_and_parse_with_retry(
+                    self._call_huggingface,
+                    messages,
+                    "Hugging Face"
+                )
+
+                return self._build_result(
+                    data,
+                    sources,
+                    tier=2,
+                    verification_type="live_web_huggingface_fallback"
+                )
+
+            except Exception as e:
+                print(
+                    f"[!] Hugging Face fallback failed: {e}"
+                )
 
         return {
             "tier": 2,
@@ -1271,38 +1245,10 @@ If evidence is insufficient, use "Unverified".
         )
 
         # Primary LLM
-        if self.hf_client:
-            try:
-                print(
-                    "   -> Trying primary LLM (Hugging Face)..."
-                )
-
-                data = self._call_and_parse_with_retry(
-                    self._call_huggingface,
-                    messages,
-                    "Hugging Face"
-                )
-
-                return self._build_result(
-                    data,
-                    sources,
-                    tier=2,
-                    verification_type="live_web_huggingface"
-                )
-
-            except Exception as e:
-                print(
-                    f"[!] Hugging Face failed: {e}"
-                )
-                print(
-                    "   -> Switching to Groq fallback..."
-                )
-
-        # Groq fallback
         if self.groq_client:
             try:
                 print(
-                    "   -> Trying fallback LLM (Groq)..."
+                    "   -> Trying primary LLM (Groq)..."
                 )
 
                 data = self._call_and_parse_with_retry(
@@ -1315,12 +1261,40 @@ If evidence is insufficient, use "Unverified".
                     data,
                     sources,
                     tier=2,
-                    verification_type="live_web_groq_fallback"
+                    verification_type="live_web_groq"
                 )
 
             except Exception as e:
                 print(
-                    f"[!] Groq fallback failed: {e}"
+                    f"[!] Groq failed: {e}"
+                )
+                print(
+                    "   -> Switching to Hugging Face fallback..."
+                )
+
+        # Hugging Face fallback
+        if self.hf_client:
+            try:
+                print(
+                    "   -> Trying fallback LLM (Hugging Face)..."
+                )
+
+                data = self._call_and_parse_with_retry(
+                    self._call_huggingface,
+                    messages,
+                    "Hugging Face"
+                )
+
+                return self._build_result(
+                    data,
+                    sources,
+                    tier=2,
+                    verification_type="live_web_huggingface_fallback"
+                )
+
+            except Exception as e:
+                print(
+                    f"[!] Hugging Face fallback failed: {e}"
                 )
 
         return {
