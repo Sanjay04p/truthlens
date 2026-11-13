@@ -9,6 +9,7 @@ import uvicorn
 # 1. Import both pipelines
 from pipelines.text_pipeline import TextVerificationPipeline
 from pipelines.image_pipeline import ImageVerificationPipeline
+from pipelines.video_pipeline import analyze_video_pipeline
 
 app = FastAPI(
     title="TruthLens AI Engine",
@@ -163,6 +164,41 @@ def verify_image_endpoint(file: UploadFile = File(...)):
         # Ensure cleanup of the temporary file to prevent disk exhaustion
         if temp_path and temp_path.exists():
             temp_path.unlink()
+
+
+
+@app.post("/verify-video")
+def verify_video_endpoint(file: UploadFile = File(...)):
+    allowed_types = [
+        "video/mp4",
+        "video/quicktime",
+        "video/webm",
+        "video/x-msvideo",
+    ]
+
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Unsupported video format.")
+
+    suffix = Path(file.filename).suffix if file.filename else ".mp4"
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            shutil.copyfileobj(file.file, temp_file)
+            temp_path = Path(temp_file.name)
+
+        return analyze_video_pipeline(str(temp_path))
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Video processing failed: {str(e)}"
+        )
+
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink()
+
 
 # 6. Server Execution
 if __name__ == "__main__":
