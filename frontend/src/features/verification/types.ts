@@ -29,13 +29,22 @@ export type ImageVerificationResult = {
   reason?: string
 }
 
-export type VerificationResult = TextVerificationResult | ImageVerificationResult
+export type VideoVerificationResult = {
+  modality: 'video'
+  label: VerificationLabel
+  confidence_score?: string
+  provider_used?: string
+  breakdown?: VerificationBreakdown
+  reason?: string
+}
+
+export type VerificationResult = TextVerificationResult | ImageVerificationResult | VideoVerificationResult
 
 export type VerificationHistoryItem = {
   id: string
   title: string
   label: VerificationLabel
-  kind: 'text' | 'image'
+  kind: 'text' | 'image' | 'video'
   result: VerificationResult
   createdAt: string
 }
