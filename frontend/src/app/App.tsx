@@ -43,6 +43,7 @@ function App() {
           error={verification.error}
           onVerifyText={verification.verifyText}
           onVerifyImage={verification.verifyImage}
+          onVerifyVideo={verification.verifyVideo}
           onSelectHistory={verification.selectResult}
           onClearResult={verification.clearResult}
           onCompleted={handleCompleted}
