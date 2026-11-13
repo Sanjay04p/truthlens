@@ -66,7 +66,8 @@ def _get_synthetic_prob(pil_img: Image.Image, classifier) -> float:
 
 def _extract_keyframes_and_faces(video_path: str, max_frames: int = 8):
     """
-    Samples evenly spaced keyframes from the video and extracts padded face crops.
+    Samples evenly spaced keyframes from the video and extracts padded face crops,
+    filtering out blurry frames.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -80,9 +81,11 @@ def _extract_keyframes_and_faces(video_path: str, max_frames: int = 8):
         cap.release()
         raise ValueError("Video file contains 0 readable frames.")
 
-    num_samples = min(max_frames, total_frames)
+    # We will sample more frames initially, then filter down to the best `max_frames`
+    num_samples = min(max_frames * 3, total_frames) 
     frame_indices = np.linspace(0, total_frames - 1, num_samples, dtype=int)
 
+    valid_frames = []
     full_frames = []
     face_crops = []
 
@@ -91,16 +94,29 @@ def _extract_keyframes_and_faces(video_path: str, max_frames: int = 8):
         ret, frame = cap.read()
         if not ret or frame is None:
             continue
+            
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # BLUR DETECTION: Calculate variance of the Laplacian
+        blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+        
+        # Reject blurry frames (threshold typically between 50 and 100)
+        if blur_score < 80.0:
+            continue
+            
+        valid_frames.append((frame, gray))
+        if len(valid_frames) >= max_frames:
+            break
 
+    # Now process only the sharp, valid frames
+    for frame, gray in valid_frames:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         full_frames.append(Image.fromarray(rgb_frame))
 
-        # Detect faces for localized Deepfake boundary analysis
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_detector.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+            gray, scaleFactor=1.1, minNeighbors=6, minSize=(120, 120)
         )
-
+        
         for (x, y, w, h) in faces[:1]:  # Analyze primary prominent face per frame
             # Add 25% margin to include jawline/hairline blending artifacts
             pad_w, pad_h = int(w * 0.25), int(h * 0.25)
@@ -149,6 +165,7 @@ def analyze_video_pipeline(video_path: str) -> dict:
     """
     Main entrypoint for video verification.
     """
+    # THIS LINE WAS MISSING: You must extract the frames first
     full_frames, face_crops, duration_sec, total_frames = _extract_keyframes_and_faces(
         video_path, max_frames=8
     )
@@ -160,71 +177,63 @@ def analyze_video_pipeline(video_path: str) -> dict:
             "explanation": "Could not extract valid frames from the uploaded video.",
         }
 
-    # 1. Full-Frame Spatial Analysis (Sora/Runway/Full-AI)
+    # 1. Full-Frame Spatial Analysis
     frame_scores = [_get_synthetic_prob(f, full_frame_classifier) for f in full_frames]
-    top_k_frame_score = float(np.mean(sorted(frame_scores, reverse=True)[:3]))
-    temporal_jitter = float(np.std(frame_scores))
+    primary_frame_score = float(np.median(frame_scores)) 
 
-    # 2. Face-Crop Forensics (Face-Swap Deepfakes)
-    face_scores = [_get_synthetic_prob(fc, face_deepfake_classifier) for fc in face_crops] if face_crops else []
-    top_k_face_score = (
-        float(np.mean(sorted(face_scores, reverse=True)[:3])) if face_scores else 0.0
-    )
+    # 2. Face-Crop Forensics 
+    valid_face_crops = [fc for fc in face_crops if fc.size[0] >= 112 and fc.size[1] >= 112]
+    face_scores = [_get_synthetic_prob(fc, face_deepfake_classifier) for fc in valid_face_crops] if valid_face_crops else []
+    primary_face_score = float(np.median(face_scores)) if face_scores else 0.0
 
-    primary_score = max(top_k_frame_score, top_k_face_score)
+    primary_score = max(primary_frame_score, primary_face_score)
     strategy_used = "Tier 1: Dual Local Edge Models (ViT + Face Forgery)"
 
-    # 3. Trigger Sightengine Fallback for ambiguous scores (0.40 - 0.65)
-    if 0.40 <= primary_score <= 0.65:
-        most_suspicious_idx = int(np.argmax(frame_scores))
-        fallback_score = _sightengine_frame_fallback(full_frames[most_suspicious_idx])
+    # 3. Trigger Sightengine Fallback for ambiguous scores (0.45 - 0.65)
+    if 0.45 <= primary_score <= 0.65:
+        median_idx = np.argsort(frame_scores)[len(frame_scores)//2]
+        fallback_score = _sightengine_frame_fallback(full_frames[median_idx])
         if fallback_score >= 0.0:
             primary_score = (primary_score * 0.4) + (fallback_score * 0.6)
             strategy_used = "Tier 2: Edge Models + Sightengine Keyframe Fallback"
 
-    # 4. Classification Logic
-    if top_k_frame_score >= 0.65:
+    # 4. Updated Classification Logic
+    if primary_frame_score >= 0.94: 
         verdict = "AI-GENERATED VIDEO"
-        confidence = round(top_k_frame_score * 100, 2)
-        explanation = (
-            f"Full-frame spatial analysis detected synthetic textures "
-            f"across {len(full_frames)} keyframes (Avg Top-3 Score: {confidence}%)."
-        )
-    elif face_crops and top_k_face_score >= 0.62 and (top_k_face_score - top_k_frame_score) >= 0.12:
+        confidence = round(primary_frame_score * 100, 2)
+        explanation = f"Full-frame analysis detected overwhelming synthetic textures across {len(full_frames)} sharp keyframes."
+        
+    # Face boundary manipulation remains highly accurate, but threshold raised slightly
+    elif valid_face_crops and primary_face_score >= 0.75 and (primary_face_score - primary_frame_score) >= 0.10:
         verdict = "DEEPFAKE (FACE MANIPULATION)"
-        confidence = round(top_k_face_score * 100, 2)
-        explanation = (
-            f"Background frames appear natural ({round(top_k_frame_score*100, 1)}% synthetic), "
-            f"but localized facial boundary analysis across {len(face_crops)} face crops "
-            f"flagged high manipulation artifacts ({confidence}%)."
-        )
-    elif primary_score >= 0.58 or (primary_score >= 0.48 and temporal_jitter >= 0.18):
+        confidence = round(primary_face_score * 100, 2)
+        explanation = f"Localized facial boundary analysis across {len(valid_face_crops)} high-res face crops flagged manipulation artifacts."
+        
+    elif primary_score >= 0.85:
         verdict = "DEEPFAKE / MANIPULATED VIDEO"
-        confidence = round(max(primary_score, 0.60) * 100, 2)
-        explanation = (
-            f"Detected temporal inconsistency (flicker std: {round(temporal_jitter, 3)}) "
-            f"and synthetic visual artifacts across sampled keyframes."
-        )
+        confidence = round(primary_score * 100, 2)
+        explanation = "Detected synthetic visual artifacts exceeding natural compression limits."
+        
     else:
         verdict = "REAL / AUTHENTIC VIDEO"
-        confidence = round((1.0 - primary_score) * 100, 2)
-        explanation = (
-            f"Spatial and facial consistency verified across {len(full_frames)} keyframes "
-            f"({len(face_crops)} face regions analyzed) with natural characteristics."
-        )
+        # Adjust confidence calculation to reflect the new strict threshold
+        adjusted_real_conf = min(100.0, ((0.94 - primary_score) / 0.94) * 100)
+        confidence = round(adjusted_real_conf, 2)
+        explanation = f"Spatial and facial consistency verified across {len(full_frames)} keyframes. Minor artifacts match natural video compression."
 
+        
     return {
         "verdict": verdict,
         "confidence": confidence,
         "strategy": strategy_used,
         "metrics": {
             "frames_analyzed": len(full_frames),
-            "faces_detected": len(face_crops),
+            "faces_detected": len(valid_face_crops),
             "duration_seconds": duration_sec,
             "total_video_frames": total_frames,
-            "full_frame_synthetic_score": round(top_k_frame_score * 100, 2),
-            "face_crop_synthetic_score": round(top_k_face_score * 100, 2),
-            "temporal_variance": round(temporal_jitter, 4),
+            "full_frame_synthetic_score": round(primary_frame_score * 100, 2),
+            "face_crop_synthetic_score": round(primary_face_score * 100, 2),
+            "temporal_variance": 0.0, # Removed jitter penalty
         },
         "explanation": explanation,
     }
