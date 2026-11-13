@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ArrowUpRight, BarChart3, Check, CircleAlert, Clock3, FileText, ImagePlus, LoaderCircle, RefreshCw, ScanSearch, Shield, Sparkles, Upload, X } from 'lucide-react'
+import { ArrowUpRight, BarChart3, Check, CircleAlert, Clock3, FileText, ImagePlus, LoaderCircle, RefreshCw, ScanSearch, Shield, Sparkles, Upload, Video, X } from 'lucide-react'
 import type { VerificationHistoryItem, VerificationResult } from '../types'
 import { isTextResult } from '../types'
 
@@ -10,16 +10,17 @@ type VerificationWorkspaceProps = {
   error: string | null
   onVerifyText: (text: string) => Promise<VerificationResult | null>
   onVerifyImage: (file: File) => Promise<VerificationResult | null>
+  onVerifyVideo: (file: File) => Promise<VerificationResult | null>
   onSelectHistory: (result: VerificationResult) => void
   onClearResult: () => void
   onCompleted: (item: VerificationHistoryItem) => void
 }
 
-type Mode = 'text' | 'image'
+type Mode = 'text' | 'image' | 'video'
 
 const examples = ['The Earth is flat', 'Water is made of H2O', '5G causes illness']
 
-export function VerificationWorkspace({ history, result, isLoading, error, onVerifyText, onVerifyImage, onSelectHistory, onClearResult, onCompleted }: VerificationWorkspaceProps) {
+export function VerificationWorkspace({ history, result, isLoading, error, onVerifyText, onVerifyImage, onVerifyVideo, onSelectHistory, onClearResult, onCompleted }: VerificationWorkspaceProps) {
   const [mode, setMode] = useState<Mode>('text')
   const [claim, setClaim] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -38,8 +39,15 @@ export function VerificationWorkspace({ history, result, isLoading, error, onVer
     if (verified) onCompleted({ id: crypto.randomUUID(), title: selectedFile.name, label: verified.label, kind: 'image', result: verified, createdAt: new Date().toISOString() })
   }
 
+  const handleVideoSubmit = async () => {
+    if (!selectedFile || isLoading) return
+    const verified = await onVerifyVideo(selectedFile)
+    if (verified) onCompleted({ id: crypto.randomUUID(), title: selectedFile.name, label: verified.label, kind: 'video', result: verified, createdAt: new Date().toISOString() })
+  }
+
   const chooseFile = (file?: File) => {
-    if (!file || !file.type.startsWith('image/')) return
+    const valid = mode === 'image' ? file?.type.startsWith('image/') : file?.type.startsWith('video/')
+    if (!file || !valid) return
     setSelectedFile(file)
     setPreviewUrl(URL.createObjectURL(file))
     onClearResult()
@@ -59,7 +67,8 @@ export function VerificationWorkspace({ history, result, isLoading, error, onVer
           <div className="panel-header"><div><span className="panel-kicker">01 / Input</span><h2 id="input-panel-title">What should we verify?</h2></div><span className="secure-note"><Shield size={14} /> Session-scoped history</span></div>
           <div className="mode-tabs" role="tablist" aria-label="Verification type">
             <button role="tab" aria-selected={mode === 'text'} className={`mode-tab ${mode === 'text' ? 'mode-tab-active' : ''}`} onClick={() => setMode('text')}><FileText size={16} /> Claim text</button>
-            <button role="tab" aria-selected={mode === 'image'} className={`mode-tab ${mode === 'image' ? 'mode-tab-active' : ''}`} onClick={() => setMode('image')}><ImagePlus size={16} /> Image file</button>
+            <button role="tab" aria-selected={mode === 'image'} className={`mode-tab ${mode === 'image' ? 'mode-tab-active' : ''}`} onClick={() => { clearFile(); setMode('image') }}><ImagePlus size={16} /> Image file</button>
+            <button role="tab" aria-selected={mode === 'video'} className={`mode-tab ${mode === 'video' ? 'mode-tab-active' : ''}`} onClick={() => { clearFile(); setMode('video') }}><Video size={16} /> Video file</button>
           </div>
 
           {mode === 'text' ? <>
@@ -69,11 +78,11 @@ export function VerificationWorkspace({ history, result, isLoading, error, onVer
             <div className="examples"><span className="examples-label">Try an example</span>{examples.map((example) => <button key={example} onClick={() => setClaim(example)}>{example}</button>)}</div>
             <button className="primary-button" disabled={!claim.trim() || isLoading} onClick={handleTextSubmit}>{isLoading ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />} {isLoading ? 'Analyzing evidence...' : 'Verify claim'}<ArrowUpRight size={17} /></button>
           </> : <>
-            <label className="field-label" htmlFor="image-input">Upload an image to inspect</label>
-            {!previewUrl ? <button className="dropzone" onClick={() => fileInputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); chooseFile(event.dataTransfer.files[0]) }}><span className="upload-icon"><Upload size={20} /></span><strong>Drop an image here</strong><span>or browse from your device</span><small>JPG, PNG or WebP - up to 10 MB</small></button> : <div className="image-preview"><img src={previewUrl} alt="Selected content" /><div className="image-preview-meta"><div><strong>{selectedFile?.name}</strong><span>{selectedFile ? `${(selectedFile.size / 1024 / 1024).toFixed(2)} MB` : ''}</span></div><button className="icon-button small" aria-label="Remove selected image" onClick={clearFile}><X size={16} /></button></div></div>}
-            <input ref={fileInputRef} id="image-input" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => chooseFile(event.target.files?.[0])} />
-            <div className="image-note"><CircleAlert size={15} /><span>Image verification looks for synthetic generation signals. It is not a determination of who created the image.</span></div>
-            <button className="primary-button" disabled={!selectedFile || isLoading} onClick={handleImageSubmit}>{isLoading ? <LoaderCircle className="spin" size={17} /> : <ScanSearch size={17} />} {isLoading ? 'Inspecting image...' : 'Inspect image'}<ArrowUpRight size={17} /></button>
+            <label className="field-label" htmlFor="media-input">{mode === 'video' ? 'Upload a video to inspect' : 'Upload an image to inspect'}</label>
+            {!previewUrl ? <button className="dropzone" onClick={() => fileInputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); chooseFile(event.dataTransfer.files[0]) }}><span className="upload-icon">{mode === 'video' ? <Video size={20} /> : <Upload size={20} />}</span><strong>Drop a {mode === 'video' ? 'video' : 'file'} here</strong><span>or browse from your device</span><small>{mode === 'video' ? 'MP4, MOV, WebM or AVI - up to 100 MB' : 'JPG, PNG or WebP - up to 10 MB'}</small></button> : <div className="image-preview">{mode === 'video' ? <video src={previewUrl} controls /> : <img src={previewUrl} alt="Selected content" />}<div className="image-preview-meta"><div><strong>{selectedFile?.name}</strong><span>{selectedFile ? `${(selectedFile.size / 1024 / 1024).toFixed(2)} MB` : ''}</span></div><button className="icon-button small" aria-label="Remove selected file" onClick={clearFile}><X size={16} /></button></div></div>}
+            <input ref={fileInputRef} id="media-input" className="visually-hidden" type="file" accept={mode === 'video' ? 'video/mp4,video/quicktime,video/webm,video/x-msvideo' : 'image/jpeg,image/png,image/webp'} onChange={(event) => chooseFile(event.target.files?.[0])} />
+            <div className="image-note"><CircleAlert size={15} /><span>{mode === 'video' ? 'Video verification analyzes sampled frames for synthetic and face-manipulation signals.' : 'Image verification looks for synthetic generation signals. It is not a determination of who created the image.'}</span></div>
+            <button className="primary-button" disabled={!selectedFile || isLoading} onClick={mode === 'video' ? handleVideoSubmit : handleImageSubmit}>{isLoading ? <LoaderCircle className="spin" size={17} /> : mode === 'video' ? <Video size={17} /> : <ScanSearch size={17} />} {isLoading ? mode === 'video' ? 'Analyzing video...' : 'Inspecting image...' : mode === 'video' ? 'Inspect video' : 'Inspect image'}<ArrowUpRight size={17} /></button>
           </>}
           {error && <div className="error-banner" role="alert"><CircleAlert size={17} /><span>{error}</span><button onClick={onClearResult} aria-label="Dismiss error"><X size={15} /></button></div>}
         </section>
@@ -81,7 +90,7 @@ export function VerificationWorkspace({ history, result, isLoading, error, onVer
         <ResultPanel result={result} isLoading={isLoading} onClear={onClearResult} />
       </div>
 
-      <section className="history-section"><div className="section-heading"><div><span className="panel-kicker">Recent checks</span><h2>Session history</h2></div>{history.length > 0 && <span className="history-count">{history.length} {history.length === 1 ? 'check' : 'checks'}</span>}</div>{history.length === 0 ? <div className="empty-history"><Clock3 size={18} /><span>Your completed verifications will appear here.</span></div> : <div className="history-list">{history.slice(0, 4).map((item) => <button key={item.id} className="history-row" onClick={() => onSelectHistory(item.result)}><span className={`history-dot history-dot-${item.label.toLowerCase()}`} /> <span className="history-title">{item.title}</span><span className="history-type">{item.kind === 'text' ? 'Claim' : 'Image'}</span><span className={`history-label history-label-${item.label.toLowerCase()}`}>{item.label}</span><span className="history-time">{formatTime(item.createdAt)}</span><ArrowUpRight size={15} /></button>)}</div>}</section>
+      <section className="history-section"><div className="section-heading"><div><span className="panel-kicker">Recent checks</span><h2>Session history</h2></div>{history.length > 0 && <span className="history-count">{history.length} {history.length === 1 ? 'check' : 'checks'}</span>}</div>{history.length === 0 ? <div className="empty-history"><Clock3 size={18} /><span>Your completed verifications will appear here.</span></div> : <div className="history-list">{history.slice(0, 4).map((item) => <button key={item.id} className="history-row" onClick={() => onSelectHistory(item.result)}><span className={`history-dot history-dot-${item.label.toLowerCase()}`} /> <span className="history-title">{item.title}</span><span className="history-type">{item.kind === 'text' ? 'Claim' : item.kind === 'image' ? 'Image' : 'Video'}</span><span className={`history-label history-label-${item.label.toLowerCase()}`}>{item.label}</span><span className="history-time">{formatTime(item.createdAt)}</span><ArrowUpRight size={15} /></button>)}</div>}</section>
     </div>
   )
 }
