@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { verifyImage, verifyText } from '../../../api/client'
+import { verifyImage, verifyText, verifyVideo } from '../../../api/client'
 import type { VerificationResult } from '../types'
 
 export function useVerification() {
@@ -29,6 +29,7 @@ export function useVerification() {
     error,
     verifyText: (text: string) => run(() => verifyText(text)),
     verifyImage: (file: File) => run(() => verifyImage(file)),
+    verifyVideo: (file: File) => run(() => verifyVideo(file)),
     selectResult: (nextResult: VerificationResult) => { setResult(nextResult); setError(null) },
     clearResult: () => { setResult(null); setError(null) },
   }
